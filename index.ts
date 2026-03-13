@@ -250,6 +250,16 @@ import {
   GetMergeRequestNoteSchema,
   DeleteMergeRequestDiscussionNoteSchema,
   ResolveMergeRequestThreadSchema,
+  // Tags
+  ListTagsSchema,
+  GetTagSchema,
+  CreateTagSchema,
+  DeleteTagSchema,
+  GetTagSignatureSchema,
+  GitLabTagSchema,
+  GitLabTagSignatureSchema,
+  type GitLabTag,
+  type GitLabTagSignature,
 } from "./schemas.js";
 
 import { randomUUID } from "node:crypto";
@@ -1402,6 +1412,32 @@ const allTools = [
     description: "Download a release asset file by direct asset path",
     inputSchema: toJSONSchema(DownloadReleaseAssetSchema),
   },
+  // Tags
+  {
+    name: "list_tags",
+    description: "List repository tags for a GitLab project",
+    inputSchema: toJSONSchema(ListTagsSchema),
+  },
+  {
+    name: "get_tag",
+    description: "Get a single repository tag by name",
+    inputSchema: toJSONSchema(GetTagSchema),
+  },
+  {
+    name: "create_tag",
+    description: "Create a new repository tag",
+    inputSchema: toJSONSchema(CreateTagSchema),
+  },
+  {
+    name: "delete_tag",
+    description: "Delete a repository tag",
+    inputSchema: toJSONSchema(DeleteTagSchema),
+  },
+  {
+    name: "get_tag_signature",
+    description: "Get the X.509 signature of a tag (404 if unsigned)",
+    inputSchema: toJSONSchema(GetTagSignatureSchema),
+  },
 ];
 
 // Define which tools are read-only
@@ -1458,6 +1494,10 @@ const readOnlyTools = new Set([
   "get_release",
   "download_release_asset",
   "get_merge_request_approval_state",
+  // tags
+  "list_tags",
+  "get_tag",
+  "get_tag_signature",
 ]);
 
 // Define which tools are related to wiki and can be toggled by USE_GITLAB_WIKI
@@ -1512,7 +1552,8 @@ type ToolsetId =
   | "milestones"
   | "wiki"
   | "releases"
-  | "users";
+  | "users"
+  | "tags";
 
 interface ToolsetDefinition {
   readonly id: ToolsetId;
@@ -1692,6 +1733,17 @@ const TOOLSET_DEFINITIONS: readonly ToolsetDefinition[] = [
       "get_project_events",
       "upload_markdown",
       "download_attachment",
+    ]),
+  },
+  {
+    id: "tags",
+    isDefault: false,
+    tools: new Set([
+      "list_tags",
+      "get_tag",
+      "create_tag",
+      "delete_tag",
+      "get_tag_signature",
     ]),
   },
 ] as const;
@@ -5845,6 +5897,158 @@ async function downloadReleaseAsset(
   return await response.text();
 }
 
+// ================================
+// Tags API Functions
+// ================================
+
+/**
+ * List repository tags
+ *
+ * @param projectId The ID or URL-encoded path of the project
+ * @param options Optional parameters for filtering and pagination
+ * @returns Array of tags
+ */
+async function listTags(
+  projectId: string,
+  options: {
+    order_by?: "name" | "updated" | "version";
+    sort?: "asc" | "desc";
+    search?: string;
+    page?: number;
+    per_page?: number;
+  } = {}
+): Promise<GitLabTag[]> {
+  const effectiveProjectId = getEffectiveProjectId(projectId);
+  const url = new URL(
+    `${getEffectiveApiUrl()}/projects/${encodeURIComponent(effectiveProjectId)}/repository/tags`
+  );
+
+  Object.entries(options).forEach(([key, value]) => {
+    if (value !== undefined) {
+      url.searchParams.append(key, value.toString());
+    }
+  });
+
+  const response = await fetch(url.toString(), {
+    ...getFetchConfig(),
+  });
+
+  await handleGitLabError(response);
+
+  const data = await response.json();
+  return z.array(GitLabTagSchema).parse(data);
+}
+
+/**
+ * Get a single repository tag
+ *
+ * @param projectId The ID or URL-encoded path of the project
+ * @param tagName The name of the tag
+ * @returns The tag
+ */
+async function getTag(projectId: string, tagName: string): Promise<GitLabTag> {
+  const effectiveProjectId = getEffectiveProjectId(projectId);
+
+  const response = await fetch(
+    `${getEffectiveApiUrl()}/projects/${encodeURIComponent(effectiveProjectId)}/repository/tags/${encodeURIComponent(tagName)}`,
+    {
+      ...getFetchConfig(),
+    }
+  );
+
+  await handleGitLabError(response);
+
+  const data = await response.json();
+  return GitLabTagSchema.parse(data);
+}
+
+/**
+ * Create a new tag in the repository
+ *
+ * @param projectId The ID or URL-encoded path of the project
+ * @param tagName The name of the tag
+ * @param ref Create tag using commit SHA, another tag name, or branch name
+ * @param message Optional message to create annotated tag
+ * @param releaseDescription Optional release notes for the tag
+ * @returns The created tag
+ */
+async function createTag(
+  projectId: string,
+  tagName: string,
+  ref: string,
+  message?: string,
+  releaseDescription?: string
+): Promise<GitLabTag> {
+  const effectiveProjectId = getEffectiveProjectId(projectId);
+
+  const body: Record<string, string> = {
+    tag_name: tagName,
+    ref: ref,
+  };
+  if (message) body.message = message;
+  if (releaseDescription) body.release_description = releaseDescription;
+
+  const response = await fetch(
+    `${getEffectiveApiUrl()}/projects/${encodeURIComponent(effectiveProjectId)}/repository/tags`,
+    {
+      ...getFetchConfig(),
+      method: "POST",
+      body: JSON.stringify(body),
+    }
+  );
+
+  await handleGitLabError(response);
+
+  const data = await response.json();
+  return GitLabTagSchema.parse(data);
+}
+
+/**
+ * Delete a tag from the repository
+ *
+ * @param projectId The ID or URL-encoded path of the project
+ * @param tagName The name of the tag
+ */
+async function deleteTag(projectId: string, tagName: string): Promise<void> {
+  const effectiveProjectId = getEffectiveProjectId(projectId);
+
+  const response = await fetch(
+    `${getEffectiveApiUrl()}/projects/${encodeURIComponent(effectiveProjectId)}/repository/tags/${encodeURIComponent(tagName)}`,
+    {
+      ...getFetchConfig(),
+      method: "DELETE",
+    }
+  );
+
+  await handleGitLabError(response);
+}
+
+/**
+ * Get the signature of a tag (for signed tags)
+ *
+ * @param projectId The ID or URL-encoded path of the project
+ * @param tagName The name of the tag
+ * @returns The tag signature
+ */
+async function getTagSignature(
+  projectId: string,
+  tagName: string
+): Promise<GitLabTagSignature> {
+  const effectiveProjectId = getEffectiveProjectId(projectId);
+
+  const response = await fetch(
+    `${getEffectiveApiUrl()}/projects/${encodeURIComponent(effectiveProjectId)}/repository/tags/${encodeURIComponent(tagName)}/signature`,
+    {
+      ...getFetchConfig(),
+    }
+  );
+
+  await handleGitLabError(response);
+
+  const data = await response.json();
+  return GitLabTagSignatureSchema.parse(data);
+}
+
 // Request handlers are now registered inside createServer() factory function
 // to ensure each transport connection gets its own Server instance (GHSA-345p-7cg4-v4c7).
 
@@ -7287,6 +7491,68 @@ async function handleToolCall(params: any) {
         );
         return {
           content: [{ type: "text", text: assetContent }],
+        };
+      }
+
+      // Tags handlers
+      case "list_tags": {
+        const args = ListTagsSchema.parse(params.arguments);
+        const tags = await listTags(args.project_id, {
+          order_by: args.order_by,
+          sort: args.sort,
+          search: args.search,
+          page: args.page,
+          per_page: args.per_page,
+        });
+        return {
+          content: [{ type: "text", text: JSON.stringify(tags, null, 2) }],
+        };
+      }
+
+      case "get_tag": {
+        const args = GetTagSchema.parse(params.arguments);
+        const tag = await getTag(args.project_id, args.tag_name);
+        return {
+          content: [{ type: "text", text: JSON.stringify(tag, null, 2) }],
+        };
+      }
+
+      case "create_tag": {
+        const args = CreateTagSchema.parse(params.arguments);
+        const tag = await createTag(
+          args.project_id,
+          args.tag_name,
+          args.ref,
+          args.message,
+          args.release_description
+        );
+        return {
+          content: [{ type: "text", text: JSON.stringify(tag, null, 2) }],
+        };
+      }
+
+      case "delete_tag": {
+        const args = DeleteTagSchema.parse(params.arguments);
+        await deleteTag(args.project_id, args.tag_name);
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                { status: "success", message: `Tag '${args.tag_name}' deleted successfully` },
+                null,
+                2
+              ),
+            },
+          ],
+        };
+      }
+
+      case "get_tag_signature": {
+        const args = GetTagSignatureSchema.parse(params.arguments);
+        const signature = await getTagSignature(args.project_id, args.tag_name);
+        return {
+          content: [{ type: "text", text: JSON.stringify(signature, null, 2) }],
         };
       }
 

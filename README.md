@@ -361,6 +361,7 @@ docker run -i --rm \
   - `issues`\* — Issue CRUD, notes, links, discussions (14 tools)
   - `repositories`\* — Search, create, file contents, push, fork, tree (7 tools)
   - `branches`\* — Branch creation, commits, diffs (4 tools)
+  - `tags` - Tag CRUD (5 tools)
   - `projects`\* — Project/namespace info, group projects, iterations (8 tools)
   - `labels`\* — Label CRUD (5 tools)
   - `pipelines` — Pipeline and job operations (12 tools)
@@ -588,6 +589,11 @@ The token is stored per session (identified by `mcp-session-id` header) and reus
 96. `approve_merge_request` - Approve a merge request (requires appropriate permissions)
 97. `unapprove_merge_request` - Unapprove a previously approved merge request
 98. `get_merge_request_approval_state` - Get the approval state of a merge request including approval rules and who has approved
+99. `list_tags` - List repository tags with filtering and pagination support
+100. `get_tag` - Get details of a specific repository tag
+101. `create_tag` - Create a new tag in the repository
+102. `delete_tag` - Delete a tag from the repository
+103. `get_tag_signature` - Get the signature of a signed tag
 <!-- TOOLS-END -->
 
 </details>
